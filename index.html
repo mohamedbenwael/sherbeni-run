@@ -652,9 +652,24 @@ const bg=document.createElement('canvas'),bctx=bg.getContext('2d');
 const TOUCH=window.matchMedia('(pointer:coarse)').matches;
 let W=0,H=0,DPR=1,F=400,HORIZON=0,PORTRAIT=false;
 const CAM_Y=205, LANE=84, ROAD_HALF=152, PLAYER_Z=260, Z_NEAR=60, Z_FAR=2900;
-let QLOW=false;                                   // وضع الأجهزة الضعيفة
+/* ---------- مستوى قوة الجهاز: 0 ضعيف، 1 متوسط، 2 قوي ---------- */
+let QTIER=1, QLOW=false;                           // QLOW = التوافق مع الكود القديم (يساوي QTIER===0)
+function applyTier(t){QTIER=t<0?0:t>2?2:t;QLOW=(QTIER===0);}
+(function detectDeviceTier(){                      // نحدد قوة الجهاز قبل ما نبدأ حتى
+  try{
+    const dm=navigator.deviceMemory;               // رامات تقريبية (GB)
+    const hc=navigator.hardwareConcurrency;        // عدد الأنوية
+    const conn=navigator.connection;
+    const saveData=!!(conn&&conn.saveData);
+    const slowNet=!!(conn&&/2g/.test(conn.effectiveType||''));
+    if((dm&&dm<=4)||(hc&&hc<=4)||saveData||slowNet){applyTier(0);return;}
+    const strong=(dm&&dm>=6)&&(hc&&hc>=6);
+    applyTier(strong?2:1);
+  }catch(e){applyTier(1);}
+})();
 function resize(){
-  DPR=Math.min(window.devicePixelRatio||1,QLOW?1:(TOUCH?1.5:2));
+  const DPR_CAP=QTIER===0?1:QTIER===2?(TOUCH?2:3):(TOUCH?1.35:2);
+  DPR=Math.min(window.devicePixelRatio||1,DPR_CAP);
   W=cv.clientWidth;H=cv.clientHeight;
   PORTRAIT=H>W;
   cv.width=Math.round(W*DPR);cv.height=Math.round(H*DPR);
@@ -665,7 +680,9 @@ function resize(){
   bg.width=cv.width;bg.height=cv.height;
   bctx.setTransform(DPR,0,0,DPR,0,0);
   drawSky(bctx,G.theme);drawGround(bctx,G.theme);
+  TUN_GRAD={};                                      // امسح كاش تدرّجات النفق (بيتغيّر مع المقاس)
 }
+let TUN_GRAD={};
 let rzT=0;
 window.addEventListener('resize',()=>{clearTimeout(rzT);rzT=setTimeout(resize,120);});
 window.addEventListener('orientationchange',()=>setTimeout(resize,220));
@@ -1110,7 +1127,8 @@ function applyTheme(id){
 function seedScenery(){
   const T=G.theme||themeOf('osh');
   scenery=[];
-  const step=QLOW?[360,560]:(TOUCH?[250,390]:[160,270]);
+  const STEPS=TOUCH?[[360,560],[250,390],[190,300]]:[[300,460],[160,270],[120,200]];
+  const step=STEPS[QTIER];
   for(let z=180;z<Z_FAR;z+=rnd(step[0],step[1])){
     for(const sd of [-1,1]){
       let t=pick(T.props);
@@ -1647,7 +1665,7 @@ function coinLine(l,z,n,arc,y0){
 }
 function burst(x,y,z,col,n){
   if(QLOW)return;
-  if(TOUCH)n=Math.ceil(n*0.6);
+  if(TOUCH&&QTIER<2)n=Math.ceil(n*0.6);
   const cx=px(x,z),cy=py(y,z);
   for(let i=0;i<n;i++)parts.push({x:cx,y:cy,vx:rnd(-160,160),vy:rnd(-230,40),life:rnd(.3,.7),col});
 }
@@ -1685,7 +1703,7 @@ function update(dt){
   if(G.fly>0){
     G.fly-=dt;G.state='fly';
     G.y+=(245-G.y)*Math.min(1,dt*3.2);
-    if(Math.random()<(QLOW?0.25:0.75))parts.push({x:px(G.x,PLAYER_Z)+rnd(-14,14),y:py(G.y,PLAYER_Z)-10,
+    if(Math.random()<[0.25,0.75,1][QTIER])parts.push({x:px(G.x,PLAYER_Z)+rnd(-14,14),y:py(G.y,PLAYER_Z)-10,
       vx:rnd(-40,40),vy:rnd(60,190),life:rnd(.2,.45),col:Math.random()<.5?'#F4821F':'#FFD9A8'});
     if(G.fly<=0){G.fly=0;G.state='jump';G.vy=0;}
   }else if(G.state==='jump'){
@@ -1805,19 +1823,23 @@ function render(){
   if(G.shake>0){const s=G.shake*7;ctx.translate(rnd(-s,s),rnd(-s,s));}
   ctx.drawImage(bg,0,0,W,H);
   if(G.inTunnel){
-    const V=TUN_VAR[(G.tunV||0)%TUN_VAR.length],T=G.theme||themeOf('osh');
-    const sky=ctx.createLinearGradient(0,0,0,HORIZON+2);
-    sky.addColorStop(0,'#191310');sky.addColorStop(1,V.w[1]);
-    ctx.fillStyle=sky;ctx.fillRect(0,0,W,HORIZON+2);
+    const vi=(G.tunV||0)%TUN_VAR.length,V=TUN_VAR[vi],T=G.theme||themeOf('osh');
+    let tg=TUN_GRAD[vi];
+    if(!tg){
+      const sky=ctx.createLinearGradient(0,0,0,HORIZON+2);
+      sky.addColorStop(0,'#191310');sky.addColorStop(1,V.w[1]);
+      const gg=ctx.createLinearGradient(0,HORIZON,0,HORIZON+H*0.26);
+      gg.addColorStop(0,'rgba(20,14,10,.5)');gg.addColorStop(1,'rgba(20,14,10,0)');
+      tg=TUN_GRAD[vi]={sky,gg};                       // نجهزهم مرة واحدة لكل شكل نفق ونعيد استخدامهم
+    }
+    ctx.fillStyle=tg.sky;ctx.fillRect(0,0,W,HORIZON+2);
     ctx.fillStyle='#3B2F25';ctx.fillRect(0,HORIZON,W,H-HORIZON);   // أرضية النفق
     const yn=py(0,Z_NEAR),yf=py(0,Z_FAR);
     quad(ctx,[px(-ROAD_HALF-9,Z_NEAR),yn,px(ROAD_HALF+9,Z_NEAR),yn,
               px(ROAD_HALF+9,Z_FAR),yf,px(-ROAD_HALF-9,Z_FAR),yf],'#5A4835');
     quad(ctx,[px(-ROAD_HALF,Z_NEAR),yn,px(ROAD_HALF,Z_NEAR),yn,
               px(ROAD_HALF,Z_FAR),yf,px(-ROAD_HALF,Z_FAR),yf],T.road);
-    const gg=ctx.createLinearGradient(0,HORIZON,0,HORIZON+H*0.26);
-    gg.addColorStop(0,'rgba(20,14,10,.5)');gg.addColorStop(1,'rgba(20,14,10,0)');
-    ctx.fillStyle=gg;ctx.fillRect(0,HORIZON,W,H*0.26);
+    ctx.fillStyle=tg.gg;ctx.fillRect(0,HORIZON,W,H*0.26);
     drawStripes(G.dist*10);
   }else{drawStripes(G.dist*10);drawScenery();}
   drawList.length=0;
@@ -1888,9 +1910,9 @@ function frame(ts){
   raf=requestAnimationFrame(frame);
   const dt=Math.min(.05,(ts-last)/1000||0);last=ts;
   if(dt>0){fAcc+=dt;fCnt++;
-    if(fCnt>=70){
+    if(fCnt>=40){
       const avg=fAcc/fCnt;fAcc=0;fCnt=0;
-      if(!QLOW&&avg>0.0245){QLOW=true;resize();seedScenery();}   // جهاز ضعيف → جرافيك أخف
+      if(QTIER>0&&avg>0.0221){applyTier(QTIER-1);resize();seedScenery();}   // لسه بطيء؟ ننزل درجة واحدة كل مرة
     }}
   if(G.mode==='play'&&!G.dead)update(dt);
   else if(G.mode==='play'&&G.dead){G.t+=dt;if(G.shake>0)G.shake=Math.max(0,G.shake-dt*2);}
