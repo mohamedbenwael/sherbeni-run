@@ -1,7 +1,6 @@
-const CACHE_NAME = 'sherbeni-run-v1';
+const CACHE_NAME = 'sherbeni-run-v2';
 const CORE_ASSETS = [
   './',
-  './index.html',
   './manifest.json',
   './icon-192.png',
   './icon-512.png',
@@ -10,7 +9,9 @@ const CORE_ASSETS = [
 
 self.addEventListener('install', (event) => {
   event.waitUntil(
-    caches.open(CACHE_NAME).then((cache) => cache.addAll(CORE_ASSETS))
+    caches.open(CACHE_NAME)
+      .then((cache) => cache.addAll(CORE_ASSETS))
+      .catch(() => {})
   );
   self.skipWaiting();
 });
@@ -28,27 +29,32 @@ self.addEventListener('fetch', (event) => {
   const req = event.request;
   if (req.method !== 'GET') return;
 
-  // Network-first for the game's own leaderboard/API calls, cache-first for everything else.
   const url = new URL(req.url);
-  const isSameOrigin = url.origin === self.location.origin;
+  if (url.origin !== self.location.origin) return; // fonts, leaderboard API, etc. pass straight through
 
-  if (!isSameOrigin) {
-    // Let cross-origin requests (fonts, leaderboard backend, etc.) pass straight through.
-    return;
-  }
+  // IMPORTANT: navigation requests (event.request) carry redirect:"manual" by spec.
+  // If the server ever redirects (e.g. /index.html -> /), fetch(req) resolves to an
+  // opaque "opaqueredirect" response that can't be used to respond to the page or be
+  // cached, and causes ERR_FAILED. Building a fresh request with redirect:"follow"
+  // avoids that entirely.
+  const freshRequest = new Request(req.url, {
+    method: 'GET',
+    headers: req.headers,
+    credentials: 'same-origin',
+    redirect: 'follow'
+  });
 
   event.respondWith(
-    caches.match(req).then((cached) => {
-      const fetchPromise = fetch(req)
-        .then((networkRes) => {
-          if (networkRes && networkRes.status === 200) {
-            const clone = networkRes.clone();
-            caches.open(CACHE_NAME).then((cache) => cache.put(req, clone));
-          }
-          return networkRes;
-        })
-        .catch(() => cached);
-      return cached || fetchPromise;
-    })
+    fetch(freshRequest)
+      .then((networkRes) => {
+        if (networkRes && networkRes.ok && networkRes.type === 'basic') {
+          const clone = networkRes.clone();
+          caches.open(CACHE_NAME).then((cache) => cache.put(req, clone)).catch(() => {});
+        }
+        return networkRes;
+      })
+      .catch(() =>
+        caches.match(req).then((cached) => cached || caches.match('./'))
+      )
   );
 });

@@ -2,7 +2,7 @@
   "name": "Sherbeni Run",
   "short_name": "Sherbeni Run",
   "description": "اجري.. اجمع نقاط، اتصدر الترتيب، وافوز جوايز!",
-  "start_url": "./index.html",
+  "start_url": "./",
   "scope": "./",
   "display": "standalone",
   "orientation": "portrait",
